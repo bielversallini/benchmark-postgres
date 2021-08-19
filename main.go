@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,19 +14,16 @@ import (
 )
 
 const (
-	host     = "localhost"
-	port     = 5432
-	user     = "hippo"
-	password = "update-your-postgres-pass-here"
-	dbname   = "hippo"
+	host           = "hippo-primary.postgres-operator.svc"
+	port           = 5432
+	user           = "hippo"
+	dbname         = "hippo"
+	TOTAL_CLUSTERS = 2 // Number of SNO clusters to simulate.
+	PRINT_RESULTS  = true
+	SINGLE_TABLE   = true // Store relationships in single table or separate table.
+	UPDATE_TOTAL   = 1000 // Number of records to update.
+	DELETE_TOTAL   = 1000 // Number of records to delete.
 )
-
-// const DB_IN_MEMORY bool = false
-const TOTAL_CLUSTERS int = 1 // Number of SNO clusters to simulate.
-const PRINT_RESULTS bool = true
-const SINGLE_TABLE bool = true // Store relationships in single table or separate table.
-const UPDATE_TOTAL int = 1000  // Number of records to update.
-const DELETE_TOTAL int = 1000  // Number of records to delete.
 
 var lastUID string
 
@@ -33,8 +31,10 @@ func main() {
 	fmt.Printf("Loading %d clusters from template data.\n\n", TOTAL_CLUSTERS)
 
 	// Open the PostgreSQL database.
+	password := os.Getenv("DB_PASSWORD")
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s", // sslmode=disable",
 		host, port, user, password, dbname)
+	fmt.Println("Connecting to postgres using:", psqlInfo)
 	database, err := sql.Open("postgres", psqlInfo)
 	if err != nil {
 		panic(err)
@@ -111,11 +111,11 @@ func main() {
 	// // Print record to verify it was modified.
 	// // benchmarkQuery(database, fmt.Sprintf("SELECT uid, data FROM resources WHERE uid='%s'", lastUID), true)
 
-	fmt.Printf("DESCRIPTION: Update %d records in the database.\n", UPDATE_TOTAL)
-	benchmarkUpdate(database, UPDATE_TOTAL)
+	// fmt.Printf("DESCRIPTION: Update %d records in the database.\n", UPDATE_TOTAL)
+	// benchmarkUpdate(database, UPDATE_TOTAL)
 
 	fmt.Println("\nDESCRIPTION: Delete a single record.")
-	benchmarkQuery(database, fmt.Sprintf("DELETE FROM resources WHERE id='%s'", lastUID), true)
+	benchmarkQuery(database, fmt.Sprintf("DELETE FROM resources WHERE uid='%s'", lastUID), true)
 	// Print record to verify it was deleted.
 	// benchmarkQuery(database, fmt.Sprintf("SELECT uid, data FROM resources WHERE uid='%s'", lastUID), true)
 
@@ -197,7 +197,7 @@ func insert(records []map[string]interface{}, statement *sql.Stmt, clusterName s
 			edges := record["edges"].(string)
 			edges = strings.ReplaceAll(edges, "local-cluster", clusterName)
 			_, err = statement.Exec(lastUID, record["data"], edges)
-			fmt.Printf("Inserting is slow %d of %d\n", i, len(records))
+			fmt.Printf("Inserting cluster %s - %d of %d\n", clusterName, i, len(records))
 		} else {
 			_, err = statement.Exec(lastUID, record["data"])
 		}
@@ -263,7 +263,10 @@ func benchmarkQuery(database *sql.DB, q string, printResult bool) {
  * Helper method to select records for Update and Delete.
  */
 func selectRandomRecords(database *sql.DB, total int) []string {
-	records, _ := database.Query("SELECT id FROM resources ORDER BY RANDOM() LIMIT ?", total)
+	records, err := database.Query("SELECT uid FROM resources ORDER BY RANDOM() LIMIT $1", total)
+	if err != nil {
+		fmt.Println("Error getting random uids. ", err)
+	}
 	uids := make([]string, total)
 	for i := 0; records.Next(); i++ {
 		scanErr := records.Scan(&uids[i])
@@ -283,14 +286,14 @@ func benchmarkUpdate(database *sql.DB, updateTotal int) {
 
 	// Now that we have the UIDs we want to update, start benchmarking from here.
 	start := time.Now()
-	updateStmt, _ := database.Prepare("UPDATE resources SET data = json_set(data, '$.kind', 'Updated value') WHERE id = ?")
+	updateStmt, _ := database.Prepare("UPDATE resources SET data = json_set(data, '$.kind', 'Updated value') WHERE id = $1")
 	defer updateStmt.Close()
 	// Lesson: Using BEGIN/COMMIT TRANSACTION doesn't seem to affect performance.
 	for _, uid := range uids {
 		updateStmt.Exec(uid)
 	}
 
-	fmt.Printf("QUERY      : UPDATE resources SET data = json_set(data, '$.kind', 'Updated value') WHERE id = ? \n")
+	fmt.Printf("QUERY      : UPDATE resources SET data = json_set(data, '$.kind', 'Updated value') WHERE id = $1 \n")
 	fmt.Printf("TIME       : %v \n\n", time.Since(start))
 }
 
@@ -303,8 +306,10 @@ func benchmarkDelete(database *sql.DB, deleteTotal int) {
 
 	// Now that we have the UIDs we want to delete, start benchmarking from here.
 	start := time.Now()
-	database.Exec("DELETE from resources WHERE id IN (?)", strings.Join(uids, ", "))
-
-	fmt.Printf("QUERY      : DELETE from resources WHERE id IN (?) \n") //, strings.Join(uids, ", "))
+	_, err := database.Exec("DELETE from resources WHERE uid IN ($1)", strings.Join(uids, ", "))
+	if err != nil {
+		fmt.Println("error: ", err)
+	}
+	fmt.Printf("QUERY      : DELETE from resources WHERE uid IN ($1) \n") //, strings.Join(uids, ", "))
 	fmt.Printf("TIME       : %v \n\n", time.Since(start))
 }
