@@ -14,10 +14,6 @@ import (
 )
 
 const (
-	host           = "hippo-primary.postgres-operator.svc"
-	port           = 5432
-	user           = "hippo"
-	dbname         = "hippo"
 	TOTAL_CLUSTERS = 2 // Number of SNO clusters to simulate.
 	PRINT_RESULTS  = true
 	SINGLE_TABLE   = true // Store relationships in single table or separate table.
@@ -28,13 +24,18 @@ const (
 var lastUID string
 
 func main() {
+	DB_HOST := getEnvOrUseDefault("DB_HOST", "hippo-primary.postgres-operator.svc")
+	DB_USER := getEnvOrUseDefault("DB_USER", "hippo")
+	DB_NAME := getEnvOrUseDefault("DB_NAME", "hippo")
+	DB_PASSWORD := getEnvOrUseDefault("DB_PASSWORD", "")
+	DB_PORT := 5432
+
 	fmt.Printf("Loading %d clusters from template data.\n\n", TOTAL_CLUSTERS)
 
 	// Open the PostgreSQL database.
-	password := os.Getenv("DB_PASSWORD")
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s", // sslmode=disable",
-		host, port, user, password, dbname)
-	fmt.Println("Connecting to postgres using:", psqlInfo)
+		DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME)
+	fmt.Println("Connecting to PostgreSQL using:", psqlInfo)
 	database, err := sql.Open("postgres", psqlInfo)
 	if err != nil {
 		panic(err)
@@ -312,4 +313,11 @@ func benchmarkDelete(database *sql.DB, deleteTotal int) {
 	}
 	fmt.Printf("QUERY      : DELETE from resources WHERE uid IN ($1) \n") //, strings.Join(uids, ", "))
 	fmt.Printf("TIME       : %v \n\n", time.Since(start))
+}
+
+func getEnvOrUseDefault(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
 }
