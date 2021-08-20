@@ -3,7 +3,9 @@ package dbclient
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	pgxpool "github.com/jackc/pgx/v4/pgxpool"
@@ -35,8 +37,12 @@ func createPool() {
 	DB_HOST := getEnvOrUseDefault("DB_HOST", "localhost")
 	DB_USER := getEnvOrUseDefault("DB_USER", "hippo")
 	DB_NAME := getEnvOrUseDefault("DB_NAME", "hippo")
-	DB_PASSWORD := getEnvOrUseDefault("DB_PASSWORD", "")
-	DB_PORT := 5432
+	DB_PASSWORD := url.QueryEscape(getEnvOrUseDefault("DB_PASSWORD", ""))
+	DB_PORT, err := strconv.Atoi(getEnvOrUseDefault("DB_PORT", "5432"))
+	if err != nil {
+		DB_PORT = 5432
+		fmt.Println("Error parsing db port, using default 5432")
+	}
 
 	database_url := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME)
 	fmt.Println("Connecting to PostgreSQL at: ", strings.ReplaceAll(database_url, DB_PASSWORD, "*****"))
