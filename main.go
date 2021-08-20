@@ -1,20 +1,21 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
-	_ "github.com/lib/pq"
+	pgxpool "github.com/jackc/pgx/v4/pgxpool"
+	"github.com/jlpadilla/benchmark-postgres/pkg/dbclient"
 )
 
 const (
-	TOTAL_CLUSTERS = 2 // Number of SNO clusters to simulate.
+	TOTAL_CLUSTERS = 5 // Number of SNO clusters to simulate.
 	PRINT_RESULTS  = true
 	SINGLE_TABLE   = true // Store relationships in single table or separate table.
 	UPDATE_TOTAL   = 1000 // Number of records to update.
@@ -24,39 +25,21 @@ const (
 var lastUID string
 
 func main() {
-	DB_HOST := getEnvOrUseDefault("DB_HOST", "hippo-primary.postgres-operator.svc")
-	DB_USER := getEnvOrUseDefault("DB_USER", "hippo")
-	DB_NAME := getEnvOrUseDefault("DB_NAME", "hippo")
-	DB_PASSWORD := getEnvOrUseDefault("DB_PASSWORD", "")
-	DB_PORT := 5432
-
 	fmt.Printf("Loading %d clusters from template data.\n\n", TOTAL_CLUSTERS)
 
 	// Open the PostgreSQL database.
-	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s", // sslmode=disable",
-		DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME)
-	fmt.Println("Connecting to PostgreSQL using:", psqlInfo)
-	database, err := sql.Open("postgres", psqlInfo)
-	if err != nil {
-		panic(err)
-	}
-	err = database.Ping()
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("Successfully connected!")
+	database := dbclient.GetConnection()
 
 	// Initialize the database tables.
-	var nodeStmt, edgeStmt *sql.Stmt
+	var edgeStmt *sql.Stmt
 	if SINGLE_TABLE {
-		database.Exec("DROP TABLE resources")
-		database.Exec("CREATE TABLE IF NOT EXISTS resources (uid TEXT PRIMARY KEY, data TEXT, relatedto TEXT)")
-		nodeStmt, _ = database.Prepare("INSERT INTO resources (uid, data, relatedto) VALUES ($1, $2, $3)")
+		database.Exec(context.Background(), "DROP TABLE resources")
+		database.Exec(context.Background(), "CREATE TABLE IF NOT EXISTS resources (uid TEXT PRIMARY KEY, cluster TEXT, data JSONB, relatedto JSONB)")
 	} else {
-		database.Exec("CREATE TABLE IF NOT EXISTS resources (uid TEXT PRIMARY KEY, data TEXT)")
-		database.Exec("CREATE TABLE IF NOT EXISTS relationships (sourceId TEXT, destId TEXT)")
-		nodeStmt, _ = database.Prepare("INSERT INTO resources (uid, data) VALUES ($1, $2)")
-		edgeStmt, _ = database.Prepare("INSERT INTO relationships (sourceId, destId) VALUES ($1, $2)")
+		database.Exec(context.Background(), "CREATE TABLE IF NOT EXISTS resources (uid TEXT PRIMARY KEY, data TEXT)")
+		database.Exec(context.Background(), "CREATE TABLE IF NOT EXISTS relationships (sourceId TEXT, destId TEXT)")
+		// nodeStmt, _ = database.Prepare("INSERT INTO resources (uid, data) VALUES ($1, $2)")
+		// edgeStmt, _ = database.Prepare("INSERT INTO relationships (sourceId, destId) VALUES ($1, $2)")
 	}
 
 	// Load data from file and unmarshall JSON only once.
@@ -68,12 +51,16 @@ func main() {
 	// LESSON: When using BEGIN and COMMIT TRANSACTION saving to a file is comparable to in memory.
 	for i := 0; i < TOTAL_CLUSTERS; i++ {
 		// database.Exec("BEGIN TRANSACTION")
-		insert(addNodes, nodeStmt, fmt.Sprintf("cluster-%d", i))
+		insert(addNodes, database, fmt.Sprintf("cluster-%d", i))
 		if !SINGLE_TABLE {
 			insertEdges(addEdges, edgeStmt, fmt.Sprintf("cluster-%d", i))
 		}
 		// database.Exec("COMMIT TRANSACTION")
 	}
+
+	// WORKAROUND to flush the insert channel.
+	close(dbclient.InsertChan)
+	time.Sleep(1 * time.Second)
 
 	fmt.Println("\nInsert took", time.Since(start))
 
@@ -81,31 +68,32 @@ func main() {
 	fmt.Println("\nBENCHMARK QUERIES")
 
 	fmt.Println("\nDESCRIPTION: Find a record using the UID")
-	benchmarkQuery(database, fmt.Sprintf("SELECT uid, data FROM resources WHERE uid='%s'", lastUID), true)
+	dbclient.BenchmarkQuery(fmt.Sprintf("SELECT uid, data FROM resources WHERE uid='%s'", lastUID), true)
 
 	fmt.Println("\nDESCRIPTION: Count all resources")
-	benchmarkQuery(database, "SELECT count(*) from resources", true)
+	dbclient.BenchmarkQuery("SELECT count(*) from resources", true)
 
-	if !SINGLE_TABLE {
-		fmt.Println("\nDESCRIPTION: Count all relationships")
-		benchmarkQuery(database, "SELECT count(*) FROM relationships", true)
-	}
+	// if !SINGLE_TABLE {
+	// 	fmt.Println("\nDESCRIPTION: Count all relationships")
+	// 	benchmarkQuery(database, "SELECT count(*) FROM relationships", true)
+	// }
 
-	// fmt.Println("\nDESCRIPTION: Find records with a status name containing `Run`")
-	// benchmarkQuery(database, "SELECT uid, data, relatedTo from resources where json_extract(data, \"$.status\") LIKE 'run%' LIMIT 10", PRINT_RESULTS)
+	fmt.Println("\nDESCRIPTION: Find records with a status name containing `Run`")
+	dbclient.BenchmarkQuery("SELECT uid, data from resources WHERE data->>'status' = 'Running' LIMIT 10", PRINT_RESULTS)
 
-	// fmt.Println("\nDESCRIPTION: Find all the values for the field 'namespace'")
-	// benchmarkQuery(database, "SELECT DISTINCT json_extract(resources.data, '$.namespace') from resources", PRINT_RESULTS)
+	fmt.Println("\nDESCRIPTION: Find all the values for the field 'namespace'")
+	dbclient.BenchmarkQuery("SELECT DISTINCT data->>'namespace' from resources", PRINT_RESULTS)
 
-	// // LESSON: Adding ORDER BY increases execution time by 2x.
-	// fmt.Println("\nDESCRIPTION: Find all the values for the field 'namespace' and sort in ascending order")
-	// benchmarkQuery(database, "SELECT DISTINCT json_extract(resources.data, '$.namespace') as namespace from resources ORDER BY namespace ASC", PRINT_RESULTS)
+	// LESSON: Adding ORDER BY increases execution time by 2x.
+	fmt.Println("\nDESCRIPTION: Find all the values for the field 'namespace' and sort in ascending order")
+	dbclient.BenchmarkQuery("SELECT DISTINCT data->>'namespace' as namespace from resources ORDER BY namespace ASC", PRINT_RESULTS)
 
-	// fmt.Println("\nDESCRIPTION: Find count of all values for the field 'kind'")
-	// benchmarkQuery(database, "SELECT json_extract(resources.data, '$.kind') as kind , count(json_extract(resources.data, '$.kind')) as count FROM resources GROUP BY kind ORDER BY count DESC", PRINT_RESULTS)
+	fmt.Println("\nDESCRIPTION: Find count of all values for the field 'kind'")
+	dbclient.BenchmarkQuery("SELECT data->>'kind' as kind, count(data->>'kind') as count FROM resources GROUP BY kind ORDER BY count DESC", PRINT_RESULTS)
 
-	// fmt.Println("\nDESCRIPTION: Find count of all values for the field 'kind' using subquery")
+	fmt.Println("\nDESCRIPTION: Find count of all values for the field 'kind' using subquery")
 	// benchmarkQuery(database, "SELECT kind, count(*) as count FROM (SELECT json_extract(resources.data, '$.kind') as kind FROM resources) GROUP BY kind ORDER BY count DESC", PRINT_RESULTS)
+	// dbclient.BenchmarkQuery("SELECT kind, count(*) as count FROM (SELECT data->>'kind' as kind FROM resources) GROUP BY kind ORDER BY count DESC", PRINT_RESULTS)
 
 	// fmt.Println("\nDESCRIPTION: Update a single record.")
 	// benchmarkQuery(database, fmt.Sprintf("UPDATE resources SET data = json_set(data, '$.kind', 'value was updated') WHERE uid='%s'", lastUID), true)
@@ -115,18 +103,15 @@ func main() {
 	// fmt.Printf("DESCRIPTION: Update %d records in the database.\n", UPDATE_TOTAL)
 	// benchmarkUpdate(database, UPDATE_TOTAL)
 
-	fmt.Println("\nDESCRIPTION: Delete a single record.")
-	benchmarkQuery(database, fmt.Sprintf("DELETE FROM resources WHERE uid='%s'", lastUID), true)
-	// Print record to verify it was deleted.
-	// benchmarkQuery(database, fmt.Sprintf("SELECT uid, data FROM resources WHERE uid='%s'", lastUID), true)
+	// fmt.Println("\nDESCRIPTION: Delete a single record.")
+	// benchmarkQuery(database, fmt.Sprintf("DELETE FROM resources WHERE uid='%s'", lastUID), true)
+	// // Print record to verify it was deleted.
+	// // benchmarkQuery(database, fmt.Sprintf("SELECT uid, data FROM resources WHERE uid='%s'", lastUID), true)
 
-	fmt.Printf("DESCRIPTION: Delete %d records from the database.\n", DELETE_TOTAL)
-	benchmarkDelete(database, DELETE_TOTAL)
+	// fmt.Printf("DESCRIPTION: Delete %d records from the database.\n", DELETE_TOTAL)
+	// benchmarkDelete(database, DELETE_TOTAL)
 
-	fmt.Println("\nWon't exit so I can get memory usage from OS.")
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	wg.Wait()
+	fmt.Println("DONE exiting.")
 }
 
 /*****************************
@@ -189,24 +174,37 @@ func readTemplate() ([]map[string]interface{}, []map[string]interface{}) {
 /*
  * Insert records
  */
-func insert(records []map[string]interface{}, statement *sql.Stmt, clusterName string) {
+func insert(records []map[string]interface{}, db *pgxpool.Pool, clusterName string) {
 	fmt.Print(".")
-	for i, record := range records {
+
+	for _, record := range records {
 		lastUID = strings.Replace(record["uid"].(string), "local-cluster", clusterName, 1)
-		var err error
+		// var err error
 		if SINGLE_TABLE {
-			edges := record["edges"].(string)
-			edges = strings.ReplaceAll(edges, "local-cluster", clusterName)
-			_, err = statement.Exec(lastUID, record["data"], edges)
-			fmt.Printf("Inserting cluster %s - %d of %d\n", clusterName, i, len(records))
+			// edges := record["edges"].(string)
+			// edges = strings.ReplaceAll(edges, "local-cluster", clusterName)
+			// _, err = db.Exec(context.Background(), lastUID, record["data"], edges)
+
+			var data map[string]interface{}
+			bytes := []byte(record["data"].(string))
+			if err := json.Unmarshal(bytes, &data); err != nil {
+				panic(err)
+			}
+			// fmt.Printf("Pushing to insert channnel... cluster %s. %s\n", clusterName, lastUID)
+			record := &dbclient.Record{UID: lastUID, Cluster: clusterName, Name: "TODO:Name here", Properties: data}
+			dbclient.InsertChan <- record
 		} else {
-			_, err = statement.Exec(lastUID, record["data"])
+			// _, err = statement.Exec(context.Background(), lastUID, record["data"])
+
+			record := &dbclient.Record{UID: lastUID, Cluster: clusterName, Name: "TODO:Name here", Properties: record["data"].(map[string]interface{})}
+			dbclient.InsertChan <- record
 		}
-		if err != nil {
-			fmt.Println("Error inserting record:", err, statement)
-			panic(err)
-		}
+		// if err != nil {
+		// 	fmt.Println("Error inserting record:", err, statement)
+		// 	panic(err)
+		// }
 	}
+	// tx.Commit(context.Background())
 }
 
 /*
@@ -225,40 +223,40 @@ func insertEdges(edges []map[string]interface{}, statement *sql.Stmt, clusterNam
 	}
 }
 
-func benchmarkQuery(database *sql.DB, q string, printResult bool) {
-	startQuery := time.Now()
-	rows, queryError := database.Query(q)
-	defer rows.Close()
-	if queryError != nil {
-		fmt.Println("Error executing query: ", queryError)
-	}
+// func benchmarkQuery(database *sql.DB, q string, printResult bool) {
+// 	startQuery := time.Now()
+// 	rows, queryError := database.Query(q)
+// 	defer rows.Close()
+// 	if queryError != nil {
+// 		fmt.Println("Error executing query: ", queryError)
+// 	}
 
-	fmt.Println("QUERY      :", q)
-	if printResult {
-		fmt.Println("RESULTS    :")
-	} else {
-		fmt.Println("RESULTS    : To print results set PRINT_RESULTS=true")
-	}
+// 	fmt.Println("QUERY      :", q)
+// 	if printResult {
+// 		fmt.Println("RESULTS    :")
+// 	} else {
+// 		fmt.Println("RESULTS    : To print results set PRINT_RESULTS=true")
+// 	}
 
-	for rows.Next() {
-		columns, _ := rows.Columns()
-		columnData := make([]string, 3)
-		switch len(columns) {
-		case 3:
-			rows.Scan(&columnData[0], &columnData[1], &columnData[2])
-		case 2:
-			rows.Scan(&columnData[0], &columnData[1])
-		default:
-			rows.Scan(&columnData[0])
-		}
+// 	for rows.Next() {
+// 		columns, _ := rows.Columns()
+// 		columnData := make([]string, 3)
+// 		switch len(columns) {
+// 		case 3:
+// 			rows.Scan(&columnData[0], &columnData[1], &columnData[2])
+// 		case 2:
+// 			rows.Scan(&columnData[0], &columnData[1])
+// 		default:
+// 			rows.Scan(&columnData[0])
+// 		}
 
-		if printResult {
-			fmt.Println("  *\t", columnData[0], columnData[1], columnData[2])
-		}
-	}
-	// LESSON: We can stream results from rows, but using aggregation and sorting will delay results because we have to process al records first.
-	fmt.Printf("TIME       : %v \n\n", time.Since(startQuery))
-}
+// 		if printResult {
+// 			fmt.Println("  *\t", columnData[0], columnData[1], columnData[2])
+// 		}
+// 	}
+// 	// LESSON: We can stream results from rows, but using aggregation and sorting will delay results because we have to process al records first.
+// 	fmt.Printf("TIME       : %v \n\n", time.Since(startQuery))
+// }
 
 /*
  * Helper method to select records for Update and Delete.
