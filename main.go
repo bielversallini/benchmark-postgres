@@ -15,11 +15,13 @@ import (
 )
 
 const (
-	TOTAL_CLUSTERS = 5 // Number of SNO clusters to simulate.
-	PRINT_RESULTS  = true
-	SINGLE_TABLE   = true // Store relationships in single table or separate table.
-	UPDATE_TOTAL   = 1000 // Number of records to update.
-	DELETE_TOTAL   = 1000 // Number of records to delete.
+	TOTAL_CLUSTERS   = 10 // Number of SNO clusters to simulate.
+	PRINT_RESULTS    = false
+	SINGLE_TABLE     = true  // Store relationships in single table or separate table.
+	UPDATE_TOTAL     = 1000  // Number of records to update.
+	DELETE_TOTAL     = 1000  // Number of records to delete.
+	CLUSTER_SHARDING = false // Create a cluster per table
+
 )
 
 var lastUID string
@@ -33,8 +35,18 @@ func main() {
 	// Initialize the database tables.
 	var edgeStmt *sql.Stmt
 	if SINGLE_TABLE {
-		database.Exec(context.Background(), "DROP TABLE resources")
-		database.Exec(context.Background(), "CREATE TABLE IF NOT EXISTS resources (uid TEXT PRIMARY KEY, cluster TEXT, data JSONB, relatedto JSONB)")
+
+		if CLUSTER_SHARDING {
+			for i := 0; i < TOTAL_CLUSTERS; i++ {
+				clusterName := fmt.Sprintf("cluster%d", i)
+				database.Exec(context.Background(), "DROP TABLE resources")
+				database.Exec(context.Background(), "CREATE TABLE IF NOT EXISTS '%s' (uid TEXT PRIMARY KEY, cluster TEXT, data JSONB, relatedto JSONB)", clusterName)
+			}
+		} else { // this is case where single table but not cluster sharding
+			database.Exec(context.Background(), "DROP TABLE resources")
+			database.Exec(context.Background(), "CREATE TABLE IF NOT EXISTS resources (uid TEXT PRIMARY KEY, cluster TEXT, data JSONB, relatedto JSONB)")
+
+		}
 	} else {
 		database.Exec(context.Background(), "CREATE TABLE IF NOT EXISTS resources (uid TEXT PRIMARY KEY, data TEXT)")
 		database.Exec(context.Background(), "CREATE TABLE IF NOT EXISTS relationships (sourceId TEXT, destId TEXT)")
@@ -50,12 +62,19 @@ func main() {
 
 	// LESSON: When using BEGIN and COMMIT TRANSACTION saving to a file is comparable to in memory.
 	for i := 0; i < TOTAL_CLUSTERS; i++ {
-		// database.Exec("BEGIN TRANSACTION")
-		insert(addNodes, database, fmt.Sprintf("cluster-%d", i))
-		if !SINGLE_TABLE {
-			insertEdges(addEdges, edgeStmt, fmt.Sprintf("cluster-%d", i))
+
+		if CLUSTER_SHARDING {
+			clusterName := fmt.Sprintf("cluster%d", i)
+			insert(addNodes, database, clusterName)
+
+			// database.Exec("BEGIN TRANSACTION")
+		} else {
+			insert(addNodes, database, fmt.Sprintf("cluster-%d", i))
+			if !SINGLE_TABLE {
+				insertEdges(addEdges, edgeStmt, fmt.Sprintf("cluster-%d", i))
+			}
+			// database.Exec("COMMIT TRANSACTION")
 		}
-		// database.Exec("COMMIT TRANSACTION")
 	}
 
 	// WORKAROUND to flush the insert channel.
@@ -79,7 +98,7 @@ func main() {
 	// }
 
 	fmt.Println("\nDESCRIPTION: Find records with a status name containing `Run`")
-	dbclient.BenchmarkQuery("SELECT uid, data from resources WHERE data->>'status' = 'Running' LIMIT 10", PRINT_RESULTS)
+	dbclient.BenchmarkQuery("SELECT uid, data from resources WHERE data->>'status' = 'Running' LIMIT 4", PRINT_RESULTS)
 
 	fmt.Println("\nDESCRIPTION: Find all the values for the field 'namespace'")
 	dbclient.BenchmarkQuery("SELECT DISTINCT data->>'namespace' from resources", PRINT_RESULTS)
@@ -91,7 +110,7 @@ func main() {
 	fmt.Println("\nDESCRIPTION: Find count of all values for the field 'kind'")
 	dbclient.BenchmarkQuery("SELECT data->>'kind' as kind, count(data->>'kind') as count FROM resources GROUP BY kind ORDER BY count DESC", PRINT_RESULTS)
 
-	fmt.Println("\nDESCRIPTION: Find count of all values for the field 'kind' using subquery")
+	// fmt.Println("\nDESCRIPTION: Find count of all values for the field 'kind' using subquery")
 	// benchmarkQuery(database, "SELECT kind, count(*) as count FROM (SELECT json_extract(resources.data, '$.kind') as kind FROM resources) GROUP BY kind ORDER BY count DESC", PRINT_RESULTS)
 	// dbclient.BenchmarkQuery("SELECT kind, count(*) as count FROM (SELECT data->>'kind' as kind FROM resources) GROUP BY kind ORDER BY count DESC", PRINT_RESULTS)
 
