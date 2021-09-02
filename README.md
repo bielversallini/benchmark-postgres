@@ -35,3 +35,5 @@ Run Job in OCP cluster
 oc login ...
 oc apply -f deploy/benchmark-job.yaml
 ```
+
+Updated: Sep 2
