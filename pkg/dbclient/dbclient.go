@@ -34,22 +34,26 @@ func init() {
 
 // Initializes the connection pool.
 func createPool() {
-	DB_HOST := getEnvOrUseDefault("DB_HOST", "localhost")
-	DB_USER := getEnvOrUseDefault("DB_USER", "hippo")
-	DB_NAME := getEnvOrUseDefault("DB_NAME", "hippo")
-	DB_PASSWORD := url.QueryEscape(getEnvOrUseDefault("DB_PASSWORD", ""))
-	DB_PORT, err := strconv.Atoi(getEnvOrUseDefault("DB_PORT", "5432"))
+	DB_USER := getEnvOrUseDefault("POSTGRES_USER", "")
+	DB_PASSWORD := url.QueryEscape(getEnvOrUseDefault("POSTGRES_PASSWORD", ""))
+	DB_HOST := getEnvOrUseDefault("POSTGRES_HOST", "")
+
+	DB_PORT, err := strconv.Atoi(getEnvOrUseDefault("POSTGRES_PORT", ""))
 	if err != nil {
 		DB_PORT = 5432
 		fmt.Println("Error parsing db port, using default 5432")
 	}
 
+	DB_NAME := getEnvOrUseDefault("POSTGRES_DB", "")
+
 	database_url := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME)
 	fmt.Println("Connecting to PostgreSQL at: ", strings.ReplaceAll(database_url, DB_PASSWORD, "*****"))
 	config, connerr := pgxpool.ParseConfig(database_url)
+
 	if connerr != nil {
 		fmt.Println("Error connecting to DB:", connerr)
 	}
+
 	config.MaxConns = maxConnections
 	conn, err := pgxpool.ConnectConfig(context.Background(), config)
 

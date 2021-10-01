@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  dev:
+    container_name: benchmark_postgres
+    build:
+      context: .
+    env_file:
+      - .env
+    command: CGO_ENABLED=0 go build -trimpath -o main main.go
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:10.4
+    ports:
+      - 35000:${POSTGRES_PORT}
+    depends_on:
+      - pgadmin
+    env_file:
+      - .env
+
+  pgadmin:
+    container_name: pgadmin4
+    image: dpage/pgadmin4
+    env_file:
+      - .env
+    ports:
+      - "5050:80"  
