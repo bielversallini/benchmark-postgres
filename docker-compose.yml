@@ -9,16 +9,15 @@ services:
       - .env
     command: CGO_ENABLED=0 go build -trimpath -o main main.go
     depends_on:
+      - pgadmin
       - postgres
 
   postgres:
     image: postgres:10.4
-    ports:
-      - 35000:${POSTGRES_PORT}
-    depends_on:
-      - pgadmin
     env_file:
       - .env
+    ports:
+      - 35000:${POSTGRES_PORT}
 
   pgadmin:
     container_name: pgadmin4

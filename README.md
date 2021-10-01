@@ -1,6 +1,12 @@
 # benchmark-postgres
 Repo to benchmark postgres performance
 
+# fork updates
+The main goal here is to turn dynamic the benchmark execution, just changing SQL files and running:
+
+    docker-composer up dev
+
+# the original
 ## Prerequisite
 You need an instance of PostgreSQL. Here are some alternatives to deploy postgres:
 - On Openshift you can use the Crunchy operator. [These insttructions worked for me](https://access.crunchydata.com/documentation/postgres-operator/v5/quickstart/)

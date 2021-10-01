@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	pgxpool "github.com/jackc/pgx/v4/pgxpool"
 )
@@ -47,6 +48,9 @@ func createPool() {
 	DB_NAME := getEnvOrUseDefault("POSTGRES_DB", "")
 
 	database_url := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", DB_USER, DB_PASSWORD, DB_HOST, DB_PORT, DB_NAME)
+
+	time.Sleep(8 * time.Second)
+
 	fmt.Println("Connecting to PostgreSQL at: ", strings.ReplaceAll(database_url, DB_PASSWORD, "*****"))
 	config, connerr := pgxpool.ParseConfig(database_url)
 
