@@ -27,10 +27,6 @@ type Record struct {
 func init() {
 	InsertChan = make(chan *Record, 100)
 	createPool()
-
-	// Start go routines to process insert.
-	go batchInsert("A")
-	go batchInsert("B")
 }
 
 // Initializes the connection pool.

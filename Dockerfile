@@ -8,7 +8,6 @@ FROM registry.access.redhat.com/ubi8/ubi-minimal:8.4
 
 COPY --from=builder /go/src/github.com/jlpadilla/benchmark-postgres/main /bin/main
 COPY --from=builder /go/src/github.com/jlpadilla/benchmark-postgres/data ./data
-COPY --from=builder /go/src/github.com/jlpadilla/benchmark-postgres/data/sno-0.json ./data/sno-0.json
 
 ENV USER_UID=1001 \
     GOGC=25
