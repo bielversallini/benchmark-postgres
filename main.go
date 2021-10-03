@@ -3,58 +3,73 @@ package main
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
-	"log"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/jlpadilla/benchmark-postgres/pkg/dbclient"
+	"github.com/jlpadilla/benchmark-postgres/pkg/fileutil"
 )
+
+var database *pgxpool.Pool
 
 func main() {
 
-	database := dbclient.GetConnection()
+	database = dbclient.GetConnection()
 
 	fmt.Println("\nStarting setup...")
-	process(database, "./data/setup.sql", false)
+
+	processFile("./data/setup.sql", false)
+
 	fmt.Println("Setup done successfully.")
 
 	fmt.Println("\nSTARTING BENCHMARKS")
 
 	fmt.Printf("\nDESCRIPTION: Insert records in the database.\n")
-	process(database, "./data/insert/1.sql", true)
-	process(database, "./data/insert/2.sql", true)
+	processDir("./data/insert", false)
+
+	fmt.Printf("\nDESCRIPTION: Update records in the database.\n")
+	processDir("./data/update", true)
+
+	fmt.Printf("\nDESCRIPTION: Query records in the database.\n")
+	processDir("./data/query", true)
+
+	fmt.Printf("\nDESCRIPTION: Delete records in the database.\n")
+	processDir("./data/delete", true)
 
 	fmt.Println("\nDONE.")
+
 }
 
 /*****************************
 Helper functions
 *****************************/
 
-func process(database *pgxpool.Pool, filename string, print bool) {
-	externalSql := readSQLFile(filename)
-	requests := strings.Split(string(externalSql), ";")
-
-	startRoutine := time.Now()
-
-	for _, request := range requests {
-		_, err := database.Exec(context.Background(), request)
-		if err != nil {
-			fmt.Println("ERROR    : ", err)
-		}
-	}
-
-	if print {
-		fmt.Printf("TOTAL TIME : %vms \n", time.Since(startRoutine).Milliseconds())
+func processDir(directoryName string, print bool) {
+	insertFiles := fileutil.GetFilesOnDir(directoryName)
+	for _, filename := range insertFiles {
+		fmt.Println("\nSCRIPT:", filename)
+		processFile(filename, print)
 	}
 }
 
-func readSQLFile(filename string) string {
-	content, err := ioutil.ReadFile(filename)
-	if err != nil {
-		log.Fatal(err)
+func processFile(filename string, print bool) {
+	externalSql := fileutil.ReadFile(filename)
+	requests := strings.Split(string(externalSql), ";")
+	startRoutine := time.Now()
+
+	for _, request := range requests {
+		if len(strings.TrimSpace(request)) > 0 {
+			res, err := database.Exec(context.Background(), request)
+			if err != nil {
+				fmt.Println("ERROR:", err)
+			}
+			if print {
+				fmt.Println("RESULT:", res.RowsAffected())
+			}
+		}
 	}
-	return string(content)
+
+	totalTime := time.Since(startRoutine).Milliseconds()
+	fmt.Println("TIME: ", totalTime, "ms")
 }

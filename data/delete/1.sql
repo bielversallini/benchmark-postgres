@@ -1,0 +1,1 @@
+delete from bench.sample_one where country = 'Brazil';

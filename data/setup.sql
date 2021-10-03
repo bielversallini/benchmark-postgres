@@ -19,3 +19,5 @@ CREATE TABLE bench.sample_two (
   country varchar(100) default NULL,
   CONSTRAINT id_pkk PRIMARY KEY (id)
 );
+
+CREATE INDEX ON bench.sample_two (country);
