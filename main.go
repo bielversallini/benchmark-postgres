@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/jlpadilla/benchmark-postgres/pkg/dbclient"
 	"github.com/jlpadilla/benchmark-postgres/pkg/fileutil"
@@ -23,21 +24,21 @@ func main() {
 
 	fmt.Println("Setup done successfully.")
 
-	fmt.Println("\nSTARTING BENCHMARKS")
+	color.Blue("\nSTARTING BENCHMARKS")
 
-	fmt.Printf("\nDESCRIPTION: Insert records in the database.\n")
+	color.Blue("\nDESCRIPTION: Insert records in the database.\n")
 	processDir("./data/insert", false)
 
-	fmt.Printf("\nDESCRIPTION: Update records in the database.\n")
+	color.Blue("\nDESCRIPTION: Update records in the database.\n")
 	processDir("./data/update", true)
 
-	fmt.Printf("\nDESCRIPTION: Query records in the database.\n")
+	color.Blue("\nDESCRIPTION: Query records in the database.\n")
 	processDir("./data/query", true)
 
-	fmt.Printf("\nDESCRIPTION: Delete records in the database.\n")
+	color.Blue("\nDESCRIPTION: Delete records in the database.\n")
 	processDir("./data/delete", true)
 
-	fmt.Println("\nDONE.")
+	color.Blue("\nDONE.")
 
 }
 
